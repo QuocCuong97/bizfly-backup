@@ -73,7 +73,10 @@ func setFields(fi os.FileInfo, w *multipart.Writer) error {
 	return nil
 }
 
-func (c *Client) uploadFile(fn string, r io.Reader, pw io.Writer, fi os.FileInfo, path string) error {
+func (c *Client) uploadFile(fn string, r io.Reader, pw io.Writer, fi os.FileInfo, path string, sem chan struct{}) error {
+	defer func() {
+		<-sem
+	}()
 	bodyBuf := &bytes.Buffer{}
 	bodyWriter := multipart.NewWriter(bodyBuf)
 	setFields(fi, bodyWriter)
@@ -117,7 +120,7 @@ func (c *Client) uploadFile(fn string, r io.Reader, pw io.Writer, fi os.FileInfo
 	return err
 }
 
-func (c *Client) uploadMultipart(recoveryPointID string, r io.Reader, pw io.Writer, info os.FileInfo, path string, sem chan struct{}) error {
+func (c *Client) uploadMultipart(machineID string, directoryID string, recoveryPointID string, r io.Reader, pw io.Writer, info os.FileInfo, path string, sem chan struct{}) error {
 	ctx := context.Background()
 	m, err := c.InitMultipart(ctx, recoveryPointID, &InitMultiPartUploadRequest{Name: path})
 	partSize := int64(MultipartUploadLowerBound)
@@ -151,14 +154,15 @@ func (c *Client) uploadMultipart(recoveryPointID string, r io.Reader, pw io.Writ
 	rc.RetryMax = 50 // TODO: configurable?
 	rcStd := rc.StandardClient()
 	for buf := range bufCh {
-		sem <- struct{}{}
 		buf := buf
 		partNum++
 		wg.Add(1)
+		<-sem
 		go func(buf []byte, partNum int) {
+			sem <- struct{}{}
 			defer func() {
-				<-sem
 				wg.Done()
+				<-sem
 			}()
 			b := new(bytes.Buffer)
 			bodyWriter := multipart.NewWriter(b)
@@ -182,6 +186,7 @@ func (c *Client) uploadMultipart(recoveryPointID string, r io.Reader, pw io.Writ
 				mu.Unlock()
 				return
 			}
+			//req, err := http.NewRequest(http.MethodPost, reqURL, bytes.NewReader(buf))
 			req, err := http.NewRequest(http.MethodPut, reqURL, io.TeeReader(b, pw))
 			if err != nil {
 				mu.Lock()
@@ -192,9 +197,12 @@ func (c *Client) uploadMultipart(recoveryPointID string, r io.Reader, pw io.Writ
 			q := req.URL.Query()
 			q.Add("part_number", strconv.Itoa(partNum))
 			q.Add("upload_id", m.UploadID)
+			q.Add("directory_id", directoryID)
+			q.Add("machine_id", machineID)
 			q.Add("name", path)
 			req.URL.RawQuery = q.Encode()
 
+			//resp, err := c.do(rcStd, req, "application/octet-stream")
 			resp, err := c.do(rcStd, req, contentType)
 			if err != nil {
 				mu.Lock()
@@ -231,12 +239,12 @@ func (c *Client) uploadMultipart(recoveryPointID string, r io.Reader, pw io.Writ
 }
 
 // UploadFile uploads given file to server.
-func (c *Client) UploadFile(fn string, r io.Reader, pw io.Writer, fi os.FileInfo, path string, batch bool, sem chan struct{}) error {
+func (c *Client) UploadFile(machineID string, directoryID string, fn string, r io.Reader, pw io.Writer, fi os.FileInfo, path string, batch bool, sem chan struct{}) error {
 	if batch {
-		return c.uploadMultipart(fn, r, pw, fi, path, sem)
+		return c.uploadMultipart(machineID, directoryID, fn, r, pw, fi, path, sem)
 
 	}
-	return c.uploadFile(fn, r, pw, fi, path)
+	return c.uploadFile(fn, r, pw, fi, path, sem)
 }
 
 // DownloadFile

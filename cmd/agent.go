@@ -96,6 +96,7 @@ var agentCmd = &cobra.Command{
 			server.WithSubscribeTopics("agent/default", "agent/"+agentID),
 			server.WithPublishTopic("agent/"+agentID),
 			server.WithBackupClient(backupClient),
+			server.WithMachineID(machineID),
 		)
 		if err != nil {
 			logger.Fatal("failed to create new server", zap.Error(err))

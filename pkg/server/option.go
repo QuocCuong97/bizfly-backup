@@ -46,3 +46,10 @@ func WithBackupClient(c *backupapi.Client) Option {
 		return nil
 	}
 }
+
+func WithMachineID(id string) Option {
+	return func(s *Server) error {
+		s.machineID = id
+		return nil
+	}
+}

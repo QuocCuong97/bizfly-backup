@@ -65,6 +65,8 @@ type Server struct {
 
 	logger *zap.Logger
 
+	machineID string
+
 	sem chan struct{}
 }
 
@@ -129,7 +131,7 @@ func (s *Server) handleBrokerEvent(e broker.Event) error {
 	s.logger.Debug("Got broker event", zap.String("event_type", msg.EventType))
 	switch msg.EventType {
 	case broker.BackupManual:
-		go s.backup(msg.BackupDirectoryID, msg.PolicyID, msg.Name, backupapi.RecoveryPointTypeInitialReplica, ioutil.Discard)
+		go s.backup(s.machineID, msg.BackupDirectoryID, msg.PolicyID, msg.Name, backupapi.RecoveryPointTypeInitialReplica, ioutil.Discard)
 		return nil
 	case broker.RestoreManual:
 		go s.restore(msg.ActionId, msg.CreatedAt, msg.RestoreSessionKey, msg.RecoveryPointID, msg.DestinationDirectory, ioutil.Discard)
@@ -203,7 +205,7 @@ func (s *Server) addToCronManager(bdc []backupapi.BackupDirectoryConfig) {
 				name := "auto-" + time.Now().Format(time.RFC3339)
 				// improve when support incremental backup
 				recoveryPointType := backupapi.RecoveryPointTypeInitialReplica
-				if err := s.backup(directoryID, policyID, name, recoveryPointType, ioutil.Discard); err != nil {
+				if err := s.backup(s.machineID, directoryID, policyID, name, recoveryPointType, ioutil.Discard); err != nil {
 					zapFields := []zap.Field{
 						zap.Error(err),
 						zap.String("service", "cron"),
@@ -469,7 +471,7 @@ func (s *Server) Run() error {
 	// Graceful valve shut-off package to manage code preemption and shutdown signaling.
 	valv := valve.New()
 	baseCtx := valv.Context()
-	s.sem = make(chan struct{}, 45)
+	s.sem = make(chan struct{}, 2)
 
 	go s.subscribeBrokerLoop(baseCtx)
 	go s.shutdownSignalLoop(baseCtx, valv)
@@ -528,7 +530,7 @@ func (s *Server) notifyStatusFailed(recoveryPointID, reason string) {
 }
 
 // backup performs backup flow.
-func (s *Server) backup(backupDirectoryID string, policyID string, name string, recoveryPointType string, progressOutput io.Writer) error {
+func (s *Server) backup(machineID string, backupDirectoryID string, policyID string, name string, recoveryPointType string, progressOutput io.Writer) error {
 	ctx := context.Background()
 	// Create recovery point
 	rp, err := s.backupClient.CreateRecoveryPoint(ctx, backupDirectoryID, &backupapi.CreateRecoveryPointRequest{
@@ -559,7 +561,6 @@ func (s *Server) backup(backupDirectoryID string, policyID string, name string, 
 	}
 	var actualSize = 0
 	var wg sync.WaitGroup
-	//sem := make(chan struct{}, 5)
 	walker := func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -585,15 +586,14 @@ func (s *Server) backup(backupDirectoryID string, policyID string, name string, 
 			batch = f.Size() > backupapi.MultipartUploadLowerBound
 		}
 		pw := backupapi.NewProgressWriter(progressOutput)
-		wg.Add(1)
 		s.sem <- struct{}{}
+		wg.Add(1)
 		go func() {
 			defer func() {
-				<-s.sem
 				wg.Done()
 				fi.Close()
 			}()
-			s.backupClient.UploadFile(rp.RecoveryPoint.ID, fi, pw, info, path, batch, s.sem)
+			s.backupClient.UploadFile(machineID, backupDirectoryID, rp.RecoveryPoint.ID, fi, pw, info, path, batch, s.sem)
 			//	TODO handle error when upload
 		}()
 		return nil
