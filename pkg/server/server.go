@@ -66,7 +66,6 @@ type Server struct {
 	logger *zap.Logger
 
 	machineID string
-
 	sem chan struct{}
 }
 
@@ -79,6 +78,7 @@ func New(opts ...Option) (*Server, error) {
 		}
 	}
 
+	s.sem = make(chan struct{}, runtime.NumCPU() * 2)
 	s.router = chi.NewRouter()
 	s.cronManager = cron.New(cron.WithParser(cron.NewParser(
 		cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow | cron.Descriptor)))
@@ -471,7 +471,6 @@ func (s *Server) Run() error {
 	// Graceful valve shut-off package to manage code preemption and shutdown signaling.
 	valv := valve.New()
 	baseCtx := valv.Context()
-	s.sem = make(chan struct{}, 2)
 
 	go s.subscribeBrokerLoop(baseCtx)
 	go s.shutdownSignalLoop(baseCtx, valv)
@@ -561,8 +560,13 @@ func (s *Server) backup(machineID string, backupDirectoryID string, policyID str
 	}
 	var actualSize = 0
 	var wg sync.WaitGroup
+	// limit number of goroutine
+	// = x2 number of cores of server
+	//sem := make(chan struct{}, runtime.NumCPU() * 2)
 	walker := func(path string, info os.FileInfo, err error) error {
+
 		if err != nil {
+			s.logger.Error("Upload file failed: ", zap.Error(err), zap.String("file_path", path))
 			return err
 		}
 		if info.IsDir() {
@@ -571,13 +575,16 @@ func (s *Server) backup(machineID string, backupDirectoryID string, policyID str
 		isSymlink := info.Mode()&os.ModeSymlink != 0
 		fi, err := os.Open(path)
 		if os.IsNotExist(err) && isSymlink {
+			s.logger.Error("File is not exist", zap.Error(err), zap.String("file_path", path))
 			return nil
 		}
 		if err != nil {
+			s.logger.Error("Upload file failed: ", zap.Error(err), zap.String("file_path", path))
 			return err
 		}
 
 		if isSymlink {
+			s.logger.Error("Ignore symlink file", zap.String("file_path", path))
 			return nil
 		}
 		actualSize += int(info.Size())
@@ -586,15 +593,26 @@ func (s *Server) backup(machineID string, backupDirectoryID string, policyID str
 			batch = f.Size() > backupapi.MultipartUploadLowerBound
 		}
 		pw := backupapi.NewProgressWriter(progressOutput)
-		s.sem <- struct{}{}
 		wg.Add(1)
+		//sem <- struct{}{}
 		go func() {
 			defer func() {
+				//<- sem
 				wg.Done()
 				fi.Close()
 			}()
-			s.backupClient.UploadFile(machineID, backupDirectoryID, rp.RecoveryPoint.ID, fi, pw, info, path, batch, s.sem)
-			//	TODO handle error when upload
+			if batch {
+				s.logger.Info("Start uploading file: ", zap.Any("file_path", path))
+				s.backupClient.UploadMultipart(machineID, backupDirectoryID, rp.RecoveryPoint.ID, fi, pw, info, path, s.sem)
+
+			} else {
+				s.sem <- struct{}{}
+				defer func() {
+					<-s.sem
+				}()
+				s.logger.Info("Start uploading file: ", zap.Any("file_path", path))
+				s.backupClient.UploadFile(rp.RecoveryPoint.ID, fi, pw, info, path)
+			}
 		}()
 		return nil
 	}
