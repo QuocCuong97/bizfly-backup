@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"time"
 
 	"io/ioutil"
 	"net/http"
@@ -45,15 +47,15 @@ type CreateRecoveryPointResponse struct {
 
 // CreateRecoveryPointRequest represents a request to create a recovery point.
 type CreateRecoveryPointRequest struct {
-	PolicyID          string `json:"policy_id"`
-	Name              string `json:"name"`
-	RecoveryPointType string `json:"recovery_point_type"`
-	ChangeTime        string `json:"change_time"`
-	ModifyTime        string `json:"modify_time"`
-	AccessTime        string `json:"access_time"`
-	Mode              string `json:"mode"`
-	GID               string `json:"gid"`
-	UID               string `json:"uid"`
+	PolicyID          string      `json:"policy_id"`
+	Name              string      `json:"name"`
+	RecoveryPointType string      `json:"recovery_point_type"`
+	ChangeTime        time.Time   `json:"change_time"`
+	ModifyTime        time.Time   `json:"modify_time"`
+	AccessTime        time.Time   `json:"access_time"`
+	Mode              os.FileMode `json:"mode"`
+	GID               uint32      `json:"gid"`
+	UID               uint32      `json:"uid"`
 }
 
 // CreateRestoreRequest represents a request manual backup.

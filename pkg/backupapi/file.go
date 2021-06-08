@@ -43,6 +43,7 @@ type Attribute struct {
 	ItemType   string `json:"item_type"`
 	Mode       string `json:"mode"`
 	GID        string `json:"gid"`
+	IsDir      bool   `json:"is_dir"`
 	UID        string `json:"uid"`
 }
 
