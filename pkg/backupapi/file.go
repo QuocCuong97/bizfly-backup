@@ -238,6 +238,7 @@ func (c *Client) UploadFile(recoveryPointID string, actionID string, latestRecov
 	if err != nil {
 		return err
 	}
+	fmt.Printf("Backup item: %+v\n", itemInfo)
 	if itemInfoLatest.ModifyTime != itemInfo.Attributes.ModifyTime {
 		fmt.Println("Save file info", itemInfo.Attributes.ItemName)
 		_, err = c.SaveFileInfo(recoveryPointID, &itemInfo)
@@ -245,15 +246,15 @@ func (c *Client) UploadFile(recoveryPointID string, actionID string, latestRecov
 			return err
 		}
 		fmt.Println("continue chunk file to backup")
+		if itemInfo.ItemType == "FILE" {
+			fmt.Println("call to function backup file")
+		}
 		return nil
 	}
 
 	if itemInfoLatest.ChangeTime != itemInfo.Attributes.ChangeTime {
 		// save info va reference chunk neu la file
 		fmt.Println("backup item with item change ctime")
-		if itemInfo.Attributes.IsDir {
-			itemInfo.ChunkReference = true
-		}
 		_, err = c.SaveFileInfo(recoveryPointID, &itemInfo)
 		if err != nil {
 			return err
@@ -264,7 +265,7 @@ func (c *Client) UploadFile(recoveryPointID string, actionID string, latestRecov
 	_, err = c.SaveFileInfo(recoveryPointID, &ItemInfo{
 		ItemType:       itemInfo.ItemType,
 		ParentItemID:   itemInfoLatest.ID,
-		ChunkReference: false,
+		ChunkReference: itemInfo.ChunkReference,
 	})
 
 	if err != nil {

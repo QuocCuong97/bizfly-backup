@@ -714,10 +714,12 @@ func WalkerDir(dir string) (*backupapi.FileInfoRequest, error) {
 			singleFile.ItemType = "DIRECTORY"
 			singleFile.Attributes.ItemType = "DIRECTORY"
 			singleFile.Attributes.IsDir = true
+			singleFile.ChunkReference = false
 		} else {
 			singleFile.ItemType = "FILE"
 			singleFile.Attributes.ItemType = "FILE"
 			singleFile.Attributes.IsDir = false
+			singleFile.ChunkReference = true
 		}
 		fileInfoRequest.Files = append(fileInfoRequest.Files, singleFile)
 		return nil
