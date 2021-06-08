@@ -13,7 +13,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -673,12 +672,12 @@ func (s *Server) requestRestore(recoveryPointID string, machineID string, path s
 }
 
 func NewStorageVolume(volumeType string) (volume.StorageVolume, error) {
-	var volume backupapi.Volume
+	var vol backupapi.Volume
 	switch volumeType {
 	case "S3":
-		return s3.NewS3Default(volume.Name, volume.StorageBucket, volume.SecretRef), nil
+		return s3.NewS3Default(vol.Name, vol.StorageBucket, vol.SecretRef), nil
 	default:
-		return nil, fmt.Errorf(fmt.Sprintf("volume type not supported %s", volume.VolumeType))
+		return nil, fmt.Errorf(fmt.Sprintf("volume type not supported %s", vol.VolumeType))
 	}
 }
 
@@ -689,26 +688,38 @@ func WalkerDir(dir string) (*backupapi.FileInfoRequest, error) {
 		if err != nil {
 			return err
 		}
-		stat_t := fi.Sys().(*syscall.Stat_t)
-		if !fi.IsDir() {
-			singleFile := backupapi.ItemInfo{
-				ItemType:     "FILE",
-				ParentItemID: "",
-				RpReference:  true,
-				Attributes: backupapi.Attribute{
-					ID:         uuid.New().String(),
-					ItemName:   path,
-					Size:       strconv.FormatInt(fi.Size(), 10),
-					ChangeTime: TimeSpecToTime(stat_t.Ctim),
-					ModifyTime: TimeSpecToTime(stat_t.Mtim),
-					AccessTime: TimeSpecToTime(stat_t.Atim),
-					Mode:       fi.Mode().Perm().String(),
-					GID:        strconv.FormatUint(uint64(stat_t.Gid), 10),
-					UID:        strconv.FormatUint(uint64(stat_t.Uid), 10),
-				},
-			}
-			fileInfoRequest.Files = append(fileInfoRequest.Files, singleFile)
+		if path == dir {
+			return nil
 		}
+		singleFile := backupapi.ItemInfo{
+			ParentItemID:   "",
+			ChunkReference: false,
+			Attributes: backupapi.Attribute{
+				ID:         uuid.New().String(),
+				ItemName:   path,
+				ModifyTime: fi.ModTime(),
+				Mode:       fi.Mode(),
+				Size:       fi.Size(),
+			},
+		}
+
+		if stat, ok := fi.Sys().(*syscall.Stat_t); ok {
+			singleFile.Attributes.AccessTime = time.Unix(stat.Atim.Unix())
+			singleFile.Attributes.ChangeTime = time.Unix(stat.Ctim.Unix())
+			singleFile.Attributes.UID = stat.Uid
+			singleFile.Attributes.GID = stat.Gid
+		}
+
+		if fi.IsDir() {
+			singleFile.ItemType = "DIRECTORY"
+			singleFile.Attributes.ItemType = "DIRECTORY"
+			singleFile.Attributes.IsDir = true
+		} else {
+			singleFile.ItemType = "FILE"
+			singleFile.Attributes.ItemType = "FILE"
+			singleFile.Attributes.IsDir = false
+		}
+		fileInfoRequest.Files = append(fileInfoRequest.Files, singleFile)
 		return nil
 	})
 	if err != nil {
